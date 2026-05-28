@@ -1,0 +1,73 @@
+---
+name: CI
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+env:
+  AQUA_CONFIG: ${{ github.workspace }}/aqua.yaml
+  AQUA_POLICY_CONFIG: ${{ github.workspace }}/aqua-policy.yaml
+jobs:
+  ok:
+    needs:
+      - test
+    if: failure()
+    permissions: {}
+    runs-on: ubuntu-24.04
+    steps:
+      - run: exit 1
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        id: setup-go
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: aquaproj/aqua-installer@11dd79b4e498d471a9385aa9fb7f62bb5f52a73c # v4.0.4
+        with:
+          aqua_version: v2.59.1
+      - run: aqua install
+      - name: golangci-lint
+        env:
+          _go_version: ${{ steps.setup-go.outputs.go-version }}
+        run: |
+          golangci-lint run \
+            --output.text.path stdout \
+            --output.text.print-issued-lines \
+            --issues-exit-code 0 \
+            --config ${{ github.workspace }}/.golangci.yml \
+            1>${{ github.workspace }}/lint-stdout.txt 2>/dev/stderr
+      - name: reviewdog
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ github.token }}
+        run: |
+          reviewdog \
+            -name golangci-lint \
+            -f golangci-lint \
+            -filter-mode nofilter \
+            -reporter github-pr-check \
+            -fail-level error \
+            < lint-stdout.txt
+  test:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        id: setup-go
+        with:
+          cache: true
+          go-version-file: go.mod
+      - run: go mod download
+      - name: go test
+        run: go test -coverpkg=./... -coverprofile=./coverage.out -timeout=30s ./...
+      - uses: k1LoW/octocov-action@b3b6ee60482a667950f87553abf1df63217235d9 # v1.5.1
+        with:
+          version: v0.73.0
